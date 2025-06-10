@@ -101,7 +101,7 @@ jobs:
       - name: UPSERT Entity
         uses: port-labs/port-github-action@v1
         with:
-          identifier: "${{ fromJson(steps.create_flag.outputs.response).key }}"
+          identifier: "${{ fromJson(steps.create_flag.outputs.response).key }}-${{ inputs.project_key }}"
           title: "${{ fromJson(steps.create_flag.outputs.response).name }}"
           blueprint: ${{fromJson(inputs.port_context).blueprint}}
           properties: |-

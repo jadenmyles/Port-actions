@@ -1,0 +1,74 @@
+name: Toggle LaunchDarkly Feature Flag
+on:
+  workflow_dispatch:
+    inputs:
+      project_key:
+        description: LaunchDarkly project key
+        required: true
+        type: string
+      flag_key:
+        description: LaunchDarkly flag key (without project suffix)
+        required: true
+        type: string
+      environment_key:
+        description: Environment key (without project suffix)
+        required: true
+        type: string
+      enabled:
+        description: Whether to enable or disable the flag
+        required: true
+        type: boolean
+      port_context:
+        required: true
+        description: includes blueprint, run ID, and entity identifier from Port.
+
+jobs:
+  toggle-feature-flag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Log Executing Request to Toggle Feature Flag
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{fromJson(inputs.port_context).run_id}}
+          logMessage: "Toggling feature flag in LaunchDarkly..."
+
+      - name: Toggle Feature Flag
+        id: toggle_flag
+        uses: fjogeleit/http-request-action@v1
+        with:
+          url: 'https://app.launchdarkly.com/api/v2/flags/${{ inputs.project_key }}/${{ inputs.flag_key }}'
+          method: 'PATCH'
+          customHeaders: '{"Content-Type": "application/json", "Authorization": "${{ secrets.LAUNCHDARKLY_ACCESS_TOKEN }}"}'
+          data: >-
+            [
+              {
+                "op": "replace",
+                "path": "/environments/${{ inputs.environment_key }}/on",
+                "value": ${{ inputs.enabled }}
+              }
+            ]
+
+      - name: Log Toggle Feature Flag Request Failure 
+        if: failure()
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{fromJson(inputs.port_context).run_id}}
+          logMessage: "Request to toggle feature flag failed"
+
+      - name: Log After Toggling Flag
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{fromJson(inputs.port_context).run_id}}
+          logMessage: "Feature flag toggled successfully ✅"

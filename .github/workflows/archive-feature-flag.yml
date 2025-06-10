@@ -1,0 +1,66 @@
+name: Archive LaunchDarkly Feature Flag
+on:
+  workflow_dispatch:
+    inputs:
+      project_key:
+        description: LaunchDarkly project key
+        required: true
+        type: string
+      flag_key:
+        description: LaunchDarkly flag key (without project suffix)
+        required: true
+        type: string
+      port_context:
+        required: true
+        description: includes blueprint, run ID, and entity identifier from Port.
+
+jobs:
+  archive-feature-flag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Log Executing Request to Archive Feature Flag
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{fromJson(inputs.port_context).run_id}}
+          logMessage: "Archiving feature flag in LaunchDarkly..."
+
+      - name: Archive Feature Flag
+        id: archive_flag
+        uses: fjogeleit/http-request-action@v1
+        with:
+          url: 'https://app.launchdarkly.com/api/v2/flags/${{ inputs.project_key }}/${{ inputs.flag_key }}'
+          method: 'PATCH'
+          customHeaders: '{"Content-Type": "application/json", "Authorization": "${{ secrets.LAUNCHDARKLY_ACCESS_TOKEN }}"}'
+          data: >-
+            [
+              {
+                "op": "replace",
+                "path": "/archived",
+                "value": true
+              }
+            ]
+
+      - name: Log Archive Feature Flag Request Failure 
+        if: failure()
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{fromJson(inputs.port_context).run_id}}
+          logMessage: "Request to archive feature flag failed"
+
+      - name: Log After Archiving Flag
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{fromJson(inputs.port_context).run_id}}
+          logMessage: "Feature flag archived successfully ✅"

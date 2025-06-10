@@ -45,6 +45,17 @@ jobs:
           runId: ${{fromJson(inputs.port_context).run_id}}
           logMessage: "Creating feature flag in LaunchDarkly..."
 
+      - name: Process Tags
+        id: process_tags
+        run: |
+          if [ -z "${{ inputs.tags }}" ] || [ "${{ inputs.tags }}" = "null" ]; then
+            echo "tags_array=[]" >> $GITHUB_OUTPUT
+          else
+            # Convert comma-separated tags to JSON array
+            tags_json=$(echo '${{ inputs.tags }}' | sed 's/,/","/g' | sed 's/^/"/' | sed 's/$/"/' | sed 's/^/[/' | sed 's/$/]/')
+            echo "tags_array=$tags_json" >> $GITHUB_OUTPUT
+          fi
+
       - name: Create Feature Flag
         id: create_flag
         uses: fjogeleit/http-request-action@v1
@@ -58,7 +69,7 @@ jobs:
               "name": "${{ inputs.flag_name }}",
               "description": "${{ inputs.flag_description }}",
               "temporary": ${{ inputs.temporary }},
-              "tags": "${{ inputs.tags }}".split(",").map(tag => tag.trim()).filter(tag => tag !== "")
+              "tags": ${{ steps.process_tags.outputs.tags_array }}
             }
 
       - name: Log Create Feature Flag Request Failure 

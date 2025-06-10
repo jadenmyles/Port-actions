@@ -83,6 +83,21 @@ jobs:
           runId: ${{fromJson(inputs.port_context).run_id}}
           logMessage: "Request to create feature flag failed"
 
+      - name: Convert Timestamp to ISO Format
+        if: steps.create_flag.outcome == 'success'
+        id: convert_timestamp
+        run: |
+          # Extract timestamp from response
+          creation_timestamp=$(echo '${{ steps.create_flag.outputs.response }}' | jq -r '.creationDate')
+          
+          # Convert Unix timestamp (milliseconds) to ISO 8601 format
+          if [ "$creation_timestamp" != "null" ] && [ "$creation_timestamp" != "" ]; then
+            creation_date=$(date -u -d "@$((creation_timestamp / 1000))" +"%Y-%m-%dT%H:%M:%SZ")
+            echo "creation_date_iso=$creation_date" >> $GITHUB_OUTPUT
+          else
+            echo "creation_date_iso=" >> $GITHUB_OUTPUT
+          fi
+
       - name: UPSERT Entity
         uses: port-labs/port-github-action@v1
         with:
@@ -93,7 +108,7 @@ jobs:
             {
               "kind": "${{ fromJson(steps.create_flag.outputs.response).kind }}",
               "description": "${{ fromJson(steps.create_flag.outputs.response).description }}",
-              "creationDate": "${{ fromJson(steps.create_flag.outputs.response).creationDate }}",
+              "creationDate": "${{ steps.convert_timestamp.outputs.creation_date_iso }}",
               "clientSideAvailability": ${{ toJson(fromJson(steps.create_flag.outputs.response).clientSideAvailability) }},
               "temporary": ${{ fromJson(steps.create_flag.outputs.response).temporary }},
               "tags": ${{ toJson(fromJson(steps.create_flag.outputs.response).tags) }},

@@ -1,0 +1,158 @@
+name: ECS Service Health Check
+
+on:
+  workflow_dispatch:
+    inputs:
+      port_context:
+        required: true
+        description: 'Action and general context (blueprint, run id, etc...)'
+        type: string
+
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Inform Port about workflow start
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{fromJson(inputs.port_context).runId}}
+          logMessage: Running health check on ECS service
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Get service details
+        id: service-details
+        run: |
+          CLUSTER_NAME="${{ fromJson(inputs.port_context).entity.relations.cluster }}"
+          SERVICE_ARN="${{ fromJson(inputs.port_context).entity.identifier }}"
+          
+          echo "🔍 Checking service health for $SERVICE_ARN in cluster $CLUSTER_NAME"
+          
+          # Get service details
+          aws ecs describe-services \
+            --cluster "$CLUSTER_NAME" \
+            --services "$SERVICE_ARN" \
+            --output table
+          
+          # Store service status for later use
+          SERVICE_STATUS=$(aws ecs describe-services \
+            --cluster "$CLUSTER_NAME" \
+            --services "$SERVICE_ARN" \
+            --query 'services[0].status' \
+            --output text)
+          
+          RUNNING_COUNT=$(aws ecs describe-services \
+            --cluster "$CLUSTER_NAME" \
+            --services "$SERVICE_ARN" \
+            --query 'services[0].runningCount' \
+            --output text)
+          
+          DESIRED_COUNT=$(aws ecs describe-services \
+            --cluster "$CLUSTER_NAME" \
+            --services "$SERVICE_ARN" \
+            --query 'services[0].desiredCount' \
+            --output text)
+          
+          echo "service_status=$SERVICE_STATUS" >> $GITHUB_OUTPUT
+          echo "running_count=$RUNNING_COUNT" >> $GITHUB_OUTPUT
+          echo "desired_count=$DESIRED_COUNT" >> $GITHUB_OUTPUT
+
+      - name: Check running tasks
+        run: |
+          CLUSTER_NAME="${{ fromJson(inputs.port_context).entity.relations.cluster }}"
+          SERVICE_ARN="${{ fromJson(inputs.port_context).entity.identifier }}"
+          
+          echo "📋 Listing running tasks..."
+          
+          # List tasks for the service
+          aws ecs list-tasks \
+            --cluster "$CLUSTER_NAME" \
+            --service-name "$SERVICE_ARN" \
+            --output table
+          
+          # Get task details if tasks exist
+          TASK_ARNS=$(aws ecs list-tasks \
+            --cluster "$CLUSTER_NAME" \
+            --service-name "$SERVICE_ARN" \
+            --query 'taskArns' \
+            --output text)
+          
+          if [ "$TASK_ARNS" != "None" ] && [ -n "$TASK_ARNS" ]; then
+            echo "🔍 Task details:"
+            aws ecs describe-tasks \
+              --cluster "$CLUSTER_NAME" \
+              --tasks $TASK_ARNS \
+              --output table
+          else
+            echo "⚠️ No running tasks found"
+          fi
+
+      - name: Check service events
+        run: |
+          CLUSTER_NAME="${{ fromJson(inputs.port_context).entity.relations.cluster }}"
+          SERVICE_ARN="${{ fromJson(inputs.port_context).entity.identifier }}"
+          
+          echo "📅 Recent service events:"
+          
+          aws ecs describe-services \
+            --cluster "$CLUSTER_NAME" \
+            --services "$SERVICE_ARN" \
+            --query 'services[0].events[:10]' \
+            --output table
+
+      - name: Health summary
+        run: |
+          SERVICE_STATUS="${{ steps.service-details.outputs.service_status }}"
+          RUNNING_COUNT="${{ steps.service-details.outputs.running_count }}"
+          DESIRED_COUNT="${{ steps.service-details.outputs.desired_count }}"
+          
+          echo "📊 Health Summary:"
+          echo "==================="
+          echo "Service Status: $SERVICE_STATUS"
+          echo "Running Tasks: $RUNNING_COUNT"
+          echo "Desired Tasks: $DESIRED_COUNT"
+          
+          if [ "$SERVICE_STATUS" = "ACTIVE" ] && [ "$RUNNING_COUNT" = "$DESIRED_COUNT" ]; then
+            echo "✅ Service is healthy"
+            HEALTH_STATUS="HEALTHY"
+          else
+            echo "⚠️ Service needs attention"
+            HEALTH_STATUS="UNHEALTHY"
+          fi
+          
+          echo "health_status=$HEALTH_STATUS" >> $GITHUB_OUTPUT
+
+      - name: Inform Port about health check results
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          status: 'SUCCESS'
+          runId: ${{fromJson(inputs.port_context).runId}}
+          logMessage: |
+            🏥 Health Check Complete
+            Status: ${{ steps.service-details.outputs.service_status }}
+            Running: ${{ steps.service-details.outputs.running_count }}/${{ steps.service-details.outputs.desired_count }} tasks
+            
+      - name: Inform Port about health check failure
+        if: failure()
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          status: 'FAILURE'
+          runId: ${{fromJson(inputs.port_context).runId}}
+          logMessage: ❌ Health check failed for ECS service ${{ fromJson(inputs.port_context).entity.identifier }}
